@@ -129,7 +129,7 @@ where
     nodes: Vec<TraceNode>,
 }
 
-impl<'a, D> Iterator for TrieIterator<'a, D>
+impl<D> Iterator for TrieIterator<'_, D>
 where
     D: DB,
 {
@@ -305,7 +305,7 @@ where
     /// Checks that the key is present in the trie
     fn contains(&self, key: &[u8]) -> TrieResult<bool> {
         let path = &Nibbles::from_raw(key, true);
-        Ok(self.get_at(&self.root, path, 0)?.map_or(false, |_| true))
+        Ok(self.get_at(&self.root, path, 0)?.is_some_and(|_| true))
     }
 
     /// Inserts value into trie and modifies it if it exists
