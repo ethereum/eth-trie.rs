@@ -13,7 +13,7 @@ homepage = "https://github.com/ethereum/eth-trie.rs"
 documentation = "https://docs.rs/eth_trie"
 
 [dependencies]
-alloy-primitives = { version = "0.8.0", features = ["getrandom", "rlp"] }
+alloy-primitives = { version = "0.8.0", features = ["rlp"] }
 alloy-rlp = { version = "0.3.8", features = ["derive"] }
 hashbrown = "0.14.0"
 keccak-hash = "0.10.0"
@@ -21,6 +21,7 @@ log = "0.4.16"
 parking_lot = "0.12"
 
 [dev-dependencies]
+alloy-primitives = { version = "0.8.0", features = ["getrandom", "rlp"] }
 rand = "0.8.3"
 hex = "0.4.2"
 criterion = "0.5.1"
