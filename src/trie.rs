@@ -305,7 +305,7 @@ where
     /// Checks that the key is present in the trie
     fn contains(&self, key: &[u8]) -> TrieResult<bool> {
         let path = &Nibbles::from_raw(key, true);
-        Ok(self.get_at(&self.root, path, 0)?.map_or(false, |_| true))
+        Ok(self.get_at(&self.root, path, 0)?.is_some_and(|_| true))
     }
 
     /// Inserts value into trie and modifies it if it exists
@@ -1071,9 +1071,9 @@ pub fn decode_node(data: &mut &[u8]) -> TrieResult<Node> {
 mod tests {
     use alloy_primitives::B256;
     use alloy_rlp::EMPTY_STRING_CODE;
-    use rand::distributions::Alphanumeric;
+    use rand::distr::Alphanumeric;
     use rand::seq::SliceRandom;
-    use rand::{thread_rng, Rng};
+    use rand::{rng, Rng};
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
 
@@ -1261,7 +1261,7 @@ mod tests {
         let mut trie = EthTrie::new(memdb);
 
         for _ in 0..1000 {
-            let rand_str: String = thread_rng()
+            let rand_str: String = rng()
                 .sample_iter(&Alphanumeric)
                 .take(30)
                 .map(char::from)
@@ -1298,7 +1298,7 @@ mod tests {
         let mut trie = EthTrie::new(memdb);
 
         for _ in 0..1000 {
-            let rand_str: String = thread_rng()
+            let rand_str: String = rng()
                 .sample_iter(&Alphanumeric)
                 .take(30)
                 .map(char::from)
@@ -1422,10 +1422,10 @@ mod tests {
         let memdb = Arc::new(MemoryDB::new(true));
         let mut trie = EthTrie::new(memdb);
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut keys = vec![];
         for _ in 0..100 {
-            let random_bytes: Vec<u8> = (0..rng.gen_range(2..30))
+            let random_bytes: Vec<u8> = (0..rng.random_range(2..30))
                 .map(|_| rand::random::<u8>())
                 .collect();
             trie.insert(&random_bytes, &random_bytes).unwrap();
