@@ -611,10 +611,10 @@ mod trie_tests {
     fn test_proof_random() {
         let memdb = Arc::new(MemoryDB::new(true));
         let mut trie = EthTrie::new(Arc::clone(&memdb));
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut keys = vec![];
         for _ in 0..100 {
-            let random_bytes: Vec<u8> = (0..rng.gen_range(2..30))
+            let random_bytes: Vec<u8> = (0..rng.random_range(2..30))
                 .map(|_| rand::random::<u8>())
                 .collect();
             trie.insert(&random_bytes, &random_bytes).unwrap();
