@@ -357,7 +357,11 @@ where
             })
         } else {
             let (n, removed) = result?;
-            self.root = n;
+            if removed {
+                self.root = self.degenerate(n)?;
+            } else {
+                self.root = n;
+            }
             Ok(removed)
         }
     }
@@ -647,7 +651,7 @@ where
     ) -> TrieResult<(Node, bool)> {
         let partial = &path.offset(path_index);
         let (new_node, deleted) = match old_node {
-            Node::Empty => Ok((Node::Empty, false)),
+            Node::Empty => Ok::<_, TrieError>((Node::Empty, false)),
             Node::Leaf(leaf) => {
                 if &leaf.key == partial {
                     return Ok((Node::Empty, true));
@@ -659,7 +663,10 @@ where
 
                 if partial.at(0) == 0x10 {
                     borrow_branch.value = None;
-                    return Ok((Node::Branch(branch.clone()), true));
+                    // explicitly drop the guard to avoid deadlock in `degenerate`.
+                    drop(borrow_branch);
+                    let new_node = Node::Branch(branch.clone());
+                    return Ok((self.degenerate(new_node)?, true));
                 }
 
                 let index = partial.at(0);
@@ -703,7 +710,7 @@ where
                             root_hash: Some(self.root_hash),
                             err_key: None,
                         })?;
-                self.delete_at(&node, path, path_index)
+                return self.delete_at(&node, path, path_index);
             }
         }?;
 
@@ -738,10 +745,35 @@ where
                 // if only one node. make an extension.
                 } else if used_indexs.len() == 1 && borrow_branch.value.is_none() {
                     let used_index = used_indexs[0];
+                    let prefix = Nibbles::from_hex(&[used_index as u8]);
                     let n = borrow_branch.children[used_index].clone();
 
-                    let new_node = Node::from_extension(Nibbles::from_hex(&[used_index as u8]), n);
-                    self.degenerate(new_node)
+                    let last_child = match n {
+                        Node::Hash(hash_node) => {
+                            let node_hash = hash_node.hash;
+                            self.passing_keys.insert(node_hash);
+
+                            self.recover_from_db(node_hash)?
+                                .ok_or(TrieError::MissingTrieNode {
+                                    node_hash,
+                                    traversed: None,
+                                    root_hash: Some(self.root_hash),
+                                    err_key: None,
+                                })
+                        }
+                        _ => Ok(n),
+                    }?;
+
+                    let new_node = match last_child {
+                        Node::Extension(ext) => {
+                            let borrow_ext = ext.read().unwrap();
+                            let new_prefix = prefix.join(&borrow_ext.prefix);
+                            Node::from_extension(new_prefix, borrow_ext.node.clone())
+                        }
+                        _ => Node::from_extension(prefix, last_child),
+                    };
+
+                    Ok(new_node)
                 } else {
                     Ok(Node::Branch(branch.clone()))
                 }
@@ -779,6 +811,7 @@ where
                         let n = Node::from_extension(borrow_ext.prefix.clone(), new_node);
                         self.degenerate(n)
                     }
+                    Node::Empty => Ok(Node::Empty),
                     _ => Ok(Node::Extension(ext.clone())),
                 }
             }
@@ -1575,5 +1608,42 @@ mod tests {
 
         // Previous trie was not modified
         assert_eq!(empty_trie.get(b"pretty-long-key").unwrap(), None);
+    }
+
+    #[test]
+    fn delete_from_partial_trie() {
+        let memdb = Arc::new(MemoryDB::new(true));
+        let mut trie = EthTrie::new(memdb.clone());
+
+        trie.insert(b"boo", b"ghost-thats-scarier-than-32-bytes")
+            .unwrap();
+        trie.insert(
+            b"do",
+            b"verb-with-a-lot-of-meaning-to-be-more-than-32-bytes",
+        )
+        .unwrap();
+        trie.insert(
+            b"dug",
+            b"a-really-deep-hole-in-the-ground-thats-more-than-32-bytes",
+        )
+        .unwrap();
+        trie.insert(
+            b"dugg",
+            b"another-really-deep-hole-in-the-ground-thats-more-than-32-bytes",
+        )
+        .unwrap();
+        trie.root_hash().unwrap();
+
+        // remove the `dug` node from the database. It shouldn't be needed to do the removal.
+        memdb
+            .remove(
+                hex::decode("7090b66c3780fbb5b17a278605e76ca1fce186cec48cf6ac5377e227b4a42807")
+                    .unwrap()
+                    .as_slice(),
+            )
+            .unwrap();
+
+        let removed = trie.remove(b"do").unwrap();
+        assert!(removed);
     }
 }
