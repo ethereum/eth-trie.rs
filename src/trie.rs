@@ -770,6 +770,10 @@ where
                             let new_prefix = prefix.join(&borrow_ext.prefix);
                             Node::from_extension(new_prefix, borrow_ext.node.clone())
                         }
+                        Node::Leaf(leaf) => {
+                            let new_prefix = prefix.join(&leaf.key);
+                            Node::from_leaf(new_prefix, leaf.value.clone())
+                        }
                         _ => Node::from_extension(prefix, last_child),
                     };
 
@@ -788,7 +792,7 @@ where
 
                         let new_prefix = prefix.join(&borrow_sub_ext.prefix);
                         let new_n = Node::from_extension(new_prefix, borrow_sub_ext.node.clone());
-                        self.degenerate(new_n)
+                        Ok(new_n)
                     }
                     Node::Leaf(leaf) => {
                         let new_prefix = prefix.join(&leaf.key);
@@ -1645,5 +1649,36 @@ mod tests {
 
         let removed = trie.remove(b"do").unwrap();
         assert!(removed);
+    }
+
+    #[test]
+    fn insert_and_remove_leaf_maintains_hash() {
+        let memdb = Arc::new(MemoryDB::new(true));
+        let mut trie = EthTrie::new(memdb.clone());
+
+        trie.insert(
+            b"do",
+            b"verb-with-a-lot-of-meaning-to-be-more-than-32-bytes",
+        )
+        .unwrap();
+        trie.insert(
+            b"dug",
+            b"a-really-deep-hole-in-the-ground-thats-more-than-32-bytes",
+        )
+        .unwrap();
+        let hash_1 = trie.root_hash().unwrap();
+
+        trie.insert(
+            b"dud",
+            b"something-that-doesnt-work-thats-more-than-32-bytes",
+        )
+        .unwrap();
+
+        let removed = trie.remove(b"dud").unwrap();
+        assert!(removed);
+
+        let hash_2 = trie.root_hash().unwrap();
+
+        assert_eq!(hash_1, hash_2)
     }
 }
