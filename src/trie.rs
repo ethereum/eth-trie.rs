@@ -647,30 +647,30 @@ where
     ) -> TrieResult<(Node, bool)> {
         let partial = &path.offset(path_index);
         let (new_node, deleted) = match old_node {
-            Node::Empty => Ok((Node::Empty, false)),
+            Node::Empty => (Node::Empty, false),
             Node::Leaf(leaf) => {
                 if &leaf.key == partial {
                     return Ok((Node::Empty, true));
                 }
-                Ok((Node::Leaf(leaf.clone()), false))
+                (Node::Leaf(leaf.clone()), false)
             }
             Node::Branch(branch) => {
                 let mut borrow_branch = branch.write().unwrap();
 
                 if partial.at(0) == 0x10 {
                     borrow_branch.value = None;
-                    return Ok((Node::Branch(branch.clone()), true));
+                    (Node::Branch(branch.clone()), true)
+                } else {
+                    let index = partial.at(0);
+                    let child = &borrow_branch.children[index];
+
+                    let (new_child, deleted) = self.delete_at(child, path, path_index + 1)?;
+                    if deleted {
+                        borrow_branch.children[index] = new_child;
+                    }
+
+                    (Node::Branch(branch.clone()), deleted)
                 }
-
-                let index = partial.at(0);
-                let child = &borrow_branch.children[index];
-
-                let (new_child, deleted) = self.delete_at(child, path, path_index + 1)?;
-                if deleted {
-                    borrow_branch.children[index] = new_child;
-                }
-
-                Ok((Node::Branch(branch.clone()), deleted))
             }
             Node::Extension(ext) => {
                 let mut borrow_ext = ext.write().unwrap();
@@ -686,9 +686,9 @@ where
                         borrow_ext.node = new_node;
                     }
 
-                    Ok((Node::Extension(ext.clone()), deleted))
+                    (Node::Extension(ext.clone()), deleted)
                 } else {
-                    Ok((Node::Extension(ext.clone()), false))
+                    (Node::Extension(ext.clone()), false)
                 }
             }
             Node::Hash(hash_node) => {
@@ -703,9 +703,9 @@ where
                             root_hash: Some(self.root_hash),
                             err_key: None,
                         })?;
-                self.delete_at(&node, path, path_index)
+                return self.delete_at(&node, path, path_index);
             }
-        }?;
+        };
 
         if deleted {
             Ok((self.degenerate(new_node)?, deleted))
@@ -756,7 +756,7 @@ where
 
                         let new_prefix = prefix.join(&borrow_sub_ext.prefix);
                         let new_n = Node::from_extension(new_prefix, borrow_sub_ext.node.clone());
-                        self.degenerate(new_n)
+                        Ok(new_n)
                     }
                     Node::Leaf(leaf) => {
                         let new_prefix = prefix.join(&leaf.key);
@@ -1575,5 +1575,73 @@ mod tests {
 
         // Previous trie was not modified
         assert_eq!(empty_trie.get(b"pretty-long-key").unwrap(), None);
+    }
+
+    #[test]
+    fn delete_from_partial_trie() {
+        let memdb = Arc::new(MemoryDB::new(true));
+        let mut trie = EthTrie::new(memdb.clone());
+
+        trie.insert(b"boo", b"ghost-thats-scarier-than-32-bytes")
+            .unwrap();
+        trie.insert(
+            b"do",
+            b"verb-with-a-lot-of-meaning-to-be-more-than-32-bytes",
+        )
+        .unwrap();
+        trie.insert(
+            b"dug",
+            b"a-really-deep-hole-in-the-ground-thats-more-than-32-bytes",
+        )
+        .unwrap();
+        trie.insert(
+            b"dugg",
+            b"another-really-deep-hole-in-the-ground-thats-more-than-32-bytes",
+        )
+        .unwrap();
+        trie.root_hash().unwrap();
+
+        // remove the `dug` node from the database. It shouldn't be needed to do the removal.
+        memdb
+            .remove(
+                hex::decode("7090b66c3780fbb5b17a278605e76ca1fce186cec48cf6ac5377e227b4a42807")
+                    .unwrap()
+                    .as_slice(),
+            )
+            .unwrap();
+
+        let removed = trie.remove(b"do").unwrap();
+        assert!(removed);
+    }
+
+    #[test]
+    fn insert_and_remove_leaf_maintains_hash() {
+        let memdb = Arc::new(MemoryDB::new(true));
+        let mut trie = EthTrie::new(memdb.clone());
+
+        trie.insert(
+            b"do",
+            b"verb-with-a-lot-of-meaning-to-be-more-than-32-bytes",
+        )
+        .unwrap();
+        trie.insert(
+            b"dug",
+            b"a-really-deep-hole-in-the-ground-thats-more-than-32-bytes",
+        )
+        .unwrap();
+        let hash_1 = trie.root_hash().unwrap();
+
+        trie.insert(
+            b"dud",
+            b"something-that-doesnt-work-thats-more-than-32-bytes",
+        )
+        .unwrap();
+
+        let removed = trie.remove(b"dud").unwrap();
+        assert!(removed);
+
+        let hash_2 = trie.root_hash().unwrap();
+
+        assert_eq!(hash_1, hash_2)
     }
 }
