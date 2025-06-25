@@ -357,11 +357,7 @@ where
             })
         } else {
             let (n, removed) = result?;
-            if removed {
-                self.root = self.degenerate(n)?;
-            } else {
-                self.root = n;
-            }
+            self.root = n;
             Ok(removed)
         }
     }
@@ -651,33 +647,30 @@ where
     ) -> TrieResult<(Node, bool)> {
         let partial = &path.offset(path_index);
         let (new_node, deleted) = match old_node {
-            Node::Empty => Ok::<_, TrieError>((Node::Empty, false)),
+            Node::Empty => (Node::Empty, false),
             Node::Leaf(leaf) => {
                 if &leaf.key == partial {
                     return Ok((Node::Empty, true));
                 }
-                Ok((Node::Leaf(leaf.clone()), false))
+                (Node::Leaf(leaf.clone()), false)
             }
             Node::Branch(branch) => {
                 let mut borrow_branch = branch.write().unwrap();
 
                 if partial.at(0) == 0x10 {
                     borrow_branch.value = None;
-                    // explicitly drop the guard to avoid deadlock in `degenerate`.
-                    drop(borrow_branch);
-                    let new_node = Node::Branch(branch.clone());
-                    return Ok((self.degenerate(new_node)?, true));
+                    (Node::Branch(branch.clone()), true)
+                } else {
+                    let index = partial.at(0);
+                    let child = &borrow_branch.children[index];
+
+                    let (new_child, deleted) = self.delete_at(child, path, path_index + 1)?;
+                    if deleted {
+                        borrow_branch.children[index] = new_child;
+                    }
+
+                    (Node::Branch(branch.clone()), deleted)
                 }
-
-                let index = partial.at(0);
-                let child = &borrow_branch.children[index];
-
-                let (new_child, deleted) = self.delete_at(child, path, path_index + 1)?;
-                if deleted {
-                    borrow_branch.children[index] = new_child;
-                }
-
-                Ok((Node::Branch(branch.clone()), deleted))
             }
             Node::Extension(ext) => {
                 let mut borrow_ext = ext.write().unwrap();
@@ -693,9 +686,9 @@ where
                         borrow_ext.node = new_node;
                     }
 
-                    Ok((Node::Extension(ext.clone()), deleted))
+                    (Node::Extension(ext.clone()), deleted)
                 } else {
-                    Ok((Node::Extension(ext.clone()), false))
+                    (Node::Extension(ext.clone()), false)
                 }
             }
             Node::Hash(hash_node) => {
@@ -712,7 +705,7 @@ where
                         })?;
                 return self.delete_at(&node, path, path_index);
             }
-        }?;
+        };
 
         if deleted {
             Ok((self.degenerate(new_node)?, deleted))
@@ -745,39 +738,10 @@ where
                 // if only one node. make an extension.
                 } else if used_indexs.len() == 1 && borrow_branch.value.is_none() {
                     let used_index = used_indexs[0];
-                    let prefix = Nibbles::from_hex(&[used_index as u8]);
                     let n = borrow_branch.children[used_index].clone();
 
-                    let last_child = match n {
-                        Node::Hash(hash_node) => {
-                            let node_hash = hash_node.hash;
-                            self.passing_keys.insert(node_hash);
-
-                            self.recover_from_db(node_hash)?
-                                .ok_or(TrieError::MissingTrieNode {
-                                    node_hash,
-                                    traversed: None,
-                                    root_hash: Some(self.root_hash),
-                                    err_key: None,
-                                })
-                        }
-                        _ => Ok(n),
-                    }?;
-
-                    let new_node = match last_child {
-                        Node::Extension(ext) => {
-                            let borrow_ext = ext.read().unwrap();
-                            let new_prefix = prefix.join(&borrow_ext.prefix);
-                            Node::from_extension(new_prefix, borrow_ext.node.clone())
-                        }
-                        Node::Leaf(leaf) => {
-                            let new_prefix = prefix.join(&leaf.key);
-                            Node::from_leaf(new_prefix, leaf.value.clone())
-                        }
-                        _ => Node::from_extension(prefix, last_child),
-                    };
-
-                    Ok(new_node)
+                    let new_node = Node::from_extension(Nibbles::from_hex(&[used_index as u8]), n);
+                    self.degenerate(new_node)
                 } else {
                     Ok(Node::Branch(branch.clone()))
                 }
@@ -815,7 +779,6 @@ where
                         let n = Node::from_extension(borrow_ext.prefix.clone(), new_node);
                         self.degenerate(n)
                     }
-                    Node::Empty => Ok(Node::Empty),
                     _ => Ok(Node::Extension(ext.clone())),
                 }
             }
